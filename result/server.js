@@ -19,7 +19,7 @@ io.on('connection', function (socket) {
 });
 
 // Build PostgreSQL connection string dynamically from environment variables
-var pgHost = process.env.PG_HOST || 'localhost';
+var pgHost = process.env.PG_HOST || 'db';
 var pgPort = process.env.PG_PORT || 5432;
 var pgUser = process.env.PG_USER || 'postgres';
 var pgPassword = process.env.PG_PASSWORD || 'postgres';
