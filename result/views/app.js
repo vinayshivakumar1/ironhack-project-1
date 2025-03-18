@@ -1,11 +1,16 @@
 var app = angular.module('catsvsdogs', []);
 
-// Determine the namespace based on the current URL:
-// If the pathname starts with '/result', use the '/result' namespace; otherwise, use the default.
-var namespace = window.location.pathname.indexOf('/result') === 0 ? '/result' : '/';
+// Decide which namespace to use, but always use the /result/socket.io path
+var namespace = '/'; // default namespace
+if (window.location.pathname.indexOf('/result') === 0) {
+  namespace = '/result';  // /result namespace
+}
 
-// Connect to the determined namespace on the same origin
-var socket = io(namespace, { path: '/socket.io', transports: ['websocket'] });
+// Connect using the chosen namespace, but ALWAYS path: '/result/socket.io'
+var socket = io(namespace, {
+  path: '/result/socket.io',
+  transports: ['websocket', 'polling']
+});
 
 var bg1 = document.getElementById('background-stats-1');
 var bg2 = document.getElementById('background-stats-2');
@@ -21,7 +26,6 @@ app.controller('statsCtrl', function($scope) {
       var b = parseInt(data.b || 0);
 
       var percentages = getPercentages(a, b);
-
       bg1.style.width = percentages.a + "%";
       bg2.style.width = percentages.b + "%";
 
@@ -38,18 +42,16 @@ app.controller('statsCtrl', function($scope) {
     updateScores();
   };
 
+  // "message" is just an example event to signal readiness
   socket.on('message', function(data) {
     init();
   });
 });
 
 function getPercentages(a, b) {
-  var result = {};
   if (a + b > 0) {
-    result.a = Math.round(a / (a + b) * 100);
-    result.b = 100 - result.a;
-  } else {
-    result.a = result.b = 50;
+    var percA = Math.round(a / (a + b) * 100);
+    return { a: percA, b: 100 - percA };
   }
-  return result;
+  return { a: 50, b: 50 };
 }
