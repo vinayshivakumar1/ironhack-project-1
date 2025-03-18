@@ -1,7 +1,11 @@
 var app = angular.module('catsvsdogs', []);
 
-// Use absolute connection so that it works on any route ("/" or "/result")
-var socket = io.connect(window.location.origin, { path: '/socket.io' });
+// Determine the namespace based on the current URL:
+// If the pathname starts with '/result', use the '/result' namespace; otherwise, use the default.
+var namespace = window.location.pathname.indexOf('/result') === 0 ? '/result' : '/';
+
+// Connect to the determined namespace on the same origin
+var socket = io(namespace, { path: '/socket.io', transports: ['websocket'] });
 
 var bg1 = document.getElementById('background-stats-1');
 var bg2 = document.getElementById('background-stats-2');
