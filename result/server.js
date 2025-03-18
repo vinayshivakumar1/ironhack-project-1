@@ -9,10 +9,25 @@ var express = require('express'),
 
 var port = process.env.PORT || 4000;
 
-// Socket.io connection handling
-io.on('connection', function (socket) {
-  socket.emit('message', { text: 'Welcome!' });
-  
+// Create namespaces
+var rootNamespace = io.of('/');       // Default namespace for pages at "/"
+var resultNamespace = io.of('/result'); // Namespace for pages at "/result"
+
+// Handle connections on the default namespace
+rootNamespace.on('connection', function (socket) {
+  console.log("Connected on root namespace");
+  socket.emit('message', { text: 'Welcome from root!' });
+
+  socket.on('subscribe', function (data) {
+    socket.join(data.channel);
+  });
+});
+
+// Handle connections on the /result namespace
+resultNamespace.on('connection', function (socket) {
+  console.log("Connected on /result namespace");
+  socket.emit('message', { text: 'Welcome from result!' });
+
   socket.on('subscribe', function (data) {
     socket.join(data.channel);
   });
@@ -57,7 +72,9 @@ function getVotes(client) {
       console.error("Error performing query: " + err);
     } else {
       var votes = collectVotesFromResult(result);
-      io.sockets.emit("scores", JSON.stringify(votes));
+      // Emit votes to both namespaces
+      rootNamespace.emit("scores", JSON.stringify(votes));
+      resultNamespace.emit("scores", JSON.stringify(votes));
     }
     setTimeout(function () { getVotes(client); }, 1000);
   });
