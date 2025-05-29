@@ -3,7 +3,7 @@
 
 services:
   vote:
-    image: ghenac/voting-app:vote
+    image: pokfinner/vote:latest
     depends_on:
       redis:
         condition: service_healthy 
@@ -14,7 +14,7 @@ services:
       - back-tier
 
   result:
-    image: ghenac/voting-app:result
+    image: pokfinner/result:latest
     depends_on:
       db:
         condition: service_healthy 
