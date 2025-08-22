@@ -1,0 +1,183 @@
+---
+# 1) Backend: Redis + Worker
+- name: Backend (Redis + Worker)
+  hosts: backend
+  become: yes
+  collections: [community.docker]
+  vars:
+    backend_ip: "{{ ansible_host }}"
+    pg_host:    "{{ hostvars['db1']['ansible_host'] }}"
+    pg_user:    "postgres"
+    pg_pass:    "postgres"
+    pg_db:      "postgres"
+    pg_port:    "5432"
+  tasks:
+    - name: Ensure Docker + pip docker present
+      apt:
+        update_cache: yes
+        name: [docker.io, python3-pip]
+        state: present
+
+    - name: Install docker SDK
+      pip: { name: docker }
+
+    - name: Enable & start Docker
+      service: { name: docker, state: started, enabled: yes }
+
+    - name: Create a Docker network for the app
+      community.docker.docker_network:
+       name: vote-net
+
+    - name: Run Redis (listen on all interfaces)
+      community.docker.docker_container:
+        name: redis
+        image: redis:7-alpine
+        state: started
+        restart_policy: always
+        ports: 
+          - "6379:6379"
+        networks:
+          - name: vote-net
+
+    - name: Wait for Redis on backend
+      wait_for:
+        host: "{{ backend_ip }}"
+        port: 6379
+        delay: 2
+        timeout: 30
+
+    - name: Run Worker (.NET)
+      community.docker.docker_container:
+        name: worker
+        image: vinaykumar1999/worker-app:latest
+        restart_policy: unless-stopped
+        env:
+          REDIS_HOST: "{{ backend_ip }}"
+          REDIS_PORT: "6379"
+          REDIS_URL:  "redis://{{ backend_ip }}:6379"
+
+          DATABASE_URL: "postgres://postgres:postgres@{{ hostvars['db1']['ansible_host'] }}:5432/postgres"
+       
+        pull: yes
+        recreate: yes
+
+# 2) DB: Postgres
+- name: Database (Postgres)
+  hosts: db
+  become: yes
+  collections: [community.docker]
+  vars:
+    pg_user: "postgres"
+    pg_pass: "postgres"
+    pg_db:   "postgres"
+  tasks:
+    - name: Ensure Docker + pip docker present
+      apt:
+        update_cache: yes
+        name: [docker.io, python3-pip]
+        state: present
+    - name: Install docker SDK
+      pip: { name: docker }
+    - name: Enable & start Docker
+      service: { name: docker, state: started, enabled: yes }
+
+    - name: Run Postgres
+      community.docker.docker_container:
+        name: postgres
+        image: postgres:15
+        restart_policy: unless-stopped
+        env:
+          POSTGRES_USER: "{{ pg_user }}"
+          POSTGRES_PASSWORD: "{{ pg_pass }}"
+          POSTGRES_DB: "{{ pg_db }}"
+        ports: ["5432:5432"]
+        command: ["postgres", "-c", "listen_addresses=*"] 
+        pull: yes
+        recreate: yes
+
+    - name: Wait for Postgres on DB
+      wait_for:
+        host: "127.0.0.1"
+        port: 5432
+        delay: 2
+        timeout: 90
+
+# 3) Frontend: Vote + Result
+- name: Frontend (Vote + Result)
+  hosts: frontend
+  become: yes
+  collections: [community.docker]
+  vars:
+    redis_host: "{{ hostvars['backend1']['ansible_host'] }}"
+    pg_host:    "{{ hostvars['db1']['ansible_host'] }}"
+    pg_user:    "postgres"
+    pg_pass:    "postgres"
+    pg_db:      "postgres"
+    pg_port:    "5432"
+  tasks:
+    - name: Ensure Docker + pip docker present
+      apt:
+        update_cache: yes
+        name: [docker.io, python3-pip]
+        state: present
+    - name: Install docker SDK
+      pip: { name: docker }
+    - name: Enable & start Docker
+      service: { name: docker, state: started, enabled: yes }
+
+    - name: Verify backend ports reachable from frontend
+      wait_for:
+        host: "{{ item.host }}"
+        port: "{{ item.port }}"
+        delay: 2
+        timeout: 90
+      loop:
+        - { host: "{{ redis_host }}", port: 6379 }
+        - { host: "{{ pg_host }}",    port: 5432 }
+
+    - name: Create a Docker network for the app
+      community.docker.docker_network:
+        name: vote-net
+
+    - name: Run Vote (Flask)
+      community.docker.docker_container:
+        name: vote
+        image: vinaykumar1999/voting-app:latest
+        state: started
+        restart_policy: always
+        networks:
+          - name: vote-net
+        env:
+          REDIS_HOST: "{{ redis_host }}"
+          REDIS_PORT: "6379"
+          REDIS_URL:  "redis://{{ redis_host }}:6379"
+        etc_hosts:
+          redis: "{{ redis_host }}" 
+        ports: ["80:80"]
+       
+
+    - name: Run Result (Node)
+      community.docker.docker_container:
+        name: result
+        image: vinaykumar1999/result-app:latest
+        restart_policy: unless-stopped
+        env:
+          PGHOST: "{{ pg_host }}"
+          PGUSER: "{{ pg_user }}"
+          PGPASSWORD: "{{ pg_pass }}"
+          PGDATABASE: "{{ pg_db }}"
+          PGPORT: "{{ pg_port }}"
+          PG_HOST: "{{ pg_host }}"
+          PG_USER: "{{ pg_user }}"
+          PG_PASSWORD: "{{ pg_pass }}"
+          PG_DATABASE: "{{ pg_db }}"
+          PG_PORT: "{{ pg_port }}"
+          DB_HOST: "{{ pg_host }}"
+          DB_USER: "{{ pg_user }}"
+          DB_PASSWORD: "{{ pg_pass }}"
+          DB_NAME: "{{ pg_db }}"
+          DB_PORT: "{{ pg_port }}"
+          DATABASE_URL: "postgres://{{ pg_user }}:{{ pg_pass }}@{{ pg_host }}:{{ pg_port }}/{{ pg_db }}"
+        ports: ["5000:80"]
+        pull: yes
+        recreate: yes
