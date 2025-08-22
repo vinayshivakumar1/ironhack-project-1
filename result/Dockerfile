@@ -26,7 +26,7 @@ ENV PORT=80 \
     PG_PASSWORD=postgres \
     PG_DATABASE=postgres
 
-EXPOSE 80
+EXPOSE 5000
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["node", "server.js"]

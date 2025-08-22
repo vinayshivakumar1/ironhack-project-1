@@ -1,66 +1,45 @@
-# Ironhack note - This file is for running in docker compose with prebuilt images
-# Use these if you're stuck, or if you want to start slowly migrating from external images into your own.
-
-services:
-  vote:
-    image: pokfinner/vote:latest
- #  build: ./vote
-    depends_on:
-      redis:
-        condition: service_healthy 
-    ports:
-      - "8080:80"
-    networks:
-      - back-tier
-
-  result:
-    image: pokfinner/result:latest
- #  build: ./result
-    depends_on:
-      db:
-        condition: service_healthy 
-    ports:
-      - "8081:80"
-    networks:
-      - back-tier
-
-  worker:
- #  build: ./worker
-    image: pokfinner/worker:latest
-    depends_on:
-      redis:
-        condition: service_healthy 
-      db:
-        condition: service_healthy 
-    networks:
-      - back-tier
-
-  redis:
-    image: redis:alpine
-    volumes:
-      - "./healthchecks:/healthchecks"
-    healthcheck:
-      test: /healthchecks/redis.sh
-      interval: "5s"
-    networks:
-      - back-tier
-
-  db:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_USER: "postgres"
-      POSTGRES_PASSWORD: "postgres"
-    volumes:
-      - "db-data:/var/lib/postgresql/data"
-      - "./healthchecks:/healthchecks"
-    healthcheck:
-      test: /healthchecks/postgres.sh
-      interval: "5s"
-    networks:
-      - back-tier
-
-volumes:
-  db-data:
+# Ick note - This file is for running in docker compose with preb
+version: "3.9"
 
 networks:
-  back-tier:
+  frontend:
+  backend:
+
+services:
+  redis:
+    image: redis:latest
+    networks:
+      - frontend
+
+  db:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    networks:
+      - backend
+
+  vote:
+    image: vinaykumar1999/voting-app
+    ports:
+      - "6000:80"   # host:container (changed from 5000 → 6000)
+    networks:
+      - frontend
+
+  result:
+    image: vinaykumar1999/result-app
+    ports:
+      - "6001:80"   # host:container (changed from 5001 → 6001)
+    networks:
+      - backend
+
+  worker:
+    image: vinaykumar1999/worker-app
+    depends_on:
+      - redis
+      - db
+    networks:
+      - frontend
+      - backend
+
