@@ -1,0 +1,134 @@
+---
+#########################################
+# Common setup (Docker + Python SDK)
+#########################################
+- hosts: all
+  become: true
+  tasks:
+    - name: Update apt and install Docker
+      apt:
+        name: docker.io
+        state: present
+        update_cache: yes
+    - name: Ensure Python3 pip is installed
+      apt:
+        name: python3-pip
+        state: present
+        update_cache: yes
+    - name: Install Python Docker SDK
+      apt:
+        name: python3-docker
+        state: present
+        update_cache: yes
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+#########################################
+# # Database - PostgreSQL
+# #########################################
+- hosts: db
+  become: true
+  tasks:
+    - name: Run PostgreSQL container
+      docker_container:
+        name: postgres
+        image: postgres:15-alpine
+        state: started
+        restart_policy: always
+        env:
+          POSTGRES_USER: "postgres"
+          POSTGRES_PASSWORD: "postgres"
+        ports:
+          - "5432:5432"
+
+        healthcheck:
+          test: ["CMD-SHELL", "pg_isready -U postgres"]
+          interval: 5s
+          retries: 5
+          start_period: 10s
+# #########################################
+# # Backend - Redis + Worker
+# #########################################
+- hosts: backend
+  become: true
+  tasks:
+    - name: Create Docker network
+      docker_network:
+        name: micro-net
+        state: present
+    - name: Run Redis container
+      docker_container:
+        name: redis
+        image: redis:alpine
+        state: started
+        restart_policy: always
+        ports:
+          - "6379:6379"
+        networks:
+          - name: micro-net
+        healthcheck:
+          test: ["CMD", "redis-cli", "ping"]
+          interval: 5s
+          retries: 5
+          start_period: 5s
+    - name: Wait for Redis to be ready
+      wait_for:
+        host: 10.0.2.33
+        port: 6379
+        delay: 5
+        timeout: 30
+    - name: Run Worker container
+      docker_container:
+        name: worker
+        image: vinaykumar1999/worker-app:latest
+        state: started
+        restart_policy: always
+        env:
+          REDIS_HOST: "10.0.2.33" # Backend host IP
+          DB_HOST: "10.0.3.99" # DB host IP
+        networks:
+          - name: micro-net
+#########################################
+# Frontend - Vote + Result
+#########################################
+- hosts: frontend
+  become: true
+  tasks:
+    - name: Wait for PostgreSQL to be ready
+      wait_for:
+        host: 10.0.3.99 # DB host IP
+        port: 5432
+        delay: 5
+        timeout: 60
+    - name: Wait for Redis to be ready
+      wait_for:
+        host: 10.0.2.33 # Backend host IP
+        port: 6379
+        delay: 5
+        timeout: 30
+    - name: Run Vote container
+      docker_container:
+        name: vote-app
+        image: towfiqueahmmed/vote:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "8080:80"
+        env:
+          REDIS_HOST: "10.0.2.33"
+          REDIS_PORT: "6379"
+    - name: Run Result container
+      docker_container:
+        name: result-app
+        image: towfiqueahmmed/result:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "8081:80"
+        env:
+          PG_HOST: "10.0.3.99"
+          PG_PORT: "5432"
+          PG_USER: "postgres"
+          PG_PASSWORD: "postgres"

@@ -1,0 +1,102 @@
+---
+# -------------------------------
+# Common setup (Docker installation)
+# -------------------------------
+- hosts: all
+  become: yes
+  tasks:
+    - name: Update apt package index
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Install Docker if not present
+      ansible.builtin.package:
+        name: docker.io
+        state: present
+
+    - name: Add user to docker group
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Ensure Docker service is running
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: yes
+
+# -------------------------------
+# FRONTEND (Voting + Result Apps)
+# -------------------------------
+- hosts: frontend
+  become: yes
+  tasks:
+    - name: Run Voting App (Python/Flask)
+      community.docker.docker_container:
+        name: voting-app
+        image: towfiqueahmmed/vote:latest
+        ports:
+          - "8080:80"
+        env:
+          REDIS_HOST: backend1
+          REDIS_PORT: "6379"
+        restart_policy: always
+        state: started
+
+    - name: Run Result App (Node.js)
+      community.docker.docker_container:
+        name: result-app
+        image: towfiqueahmmed/result:latest
+        ports:
+          - "8081:80"
+        env:
+          PG_HOST: db1
+          PG_USER: "postgres"
+          PG_PASSWORD: "postgres"
+          PG_PORT: "5432"
+        restart_policy: always
+        state: started
+
+# -------------------------------
+# BACKEND (Worker + Redis)
+# -------------------------------
+- hosts: backend
+  become: yes
+  tasks:
+    - name: Run Redis
+      community.docker.docker_container:
+        name: redis
+        image: redis:latest
+        ports:
+          - "6379:6379"
+        restart_policy: always
+        state: started
+
+    - name: Run Worker (.NET)
+      community.docker.docker_container:
+        name: worker-app
+        image: vinaykumar1999/worker-app:latest
+        env:
+          REDIS_HOST: backend1
+          DB_HOST: db1
+        restart_policy: always
+        state: started
+
+# -------------------------------
+# DATABASE (PostgreSQL)
+# -------------------------------
+- hosts: db
+  become: yes
+  tasks:
+    - name: Run PostgreSQL
+      community.docker.docker_container:
+        name: postgres
+        image: postgres:latest
+        ports:
+          - "5432:5432"
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        restart_policy: always
+        state: started

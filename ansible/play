@@ -1,0 +1,264 @@
+---
+# site.yml - Main deployment playbook for Voting App (Ubuntu)
+
+# 1) Bootstrap: Ensure packages are ready on Ubuntu
+- name: Bootstrap Ubuntu package manager
+  hosts: all
+  remote_user: ubuntu
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install base packages (Python, pip, Docker SDK)
+      apt:
+        name:
+          - python3
+          - python3-pip
+          - python3-docker
+          - python3-requests-unixsocket
+          - docker.io
+        state: present
+
+    - name: Fallback install of requests-unixsocket via pip (if apt not available)
+      pip:
+        name:
+          - requests
+          - requests-unixsocket
+        executable: pip3
+      register: pip_req_unixsocket
+      failed_when: false
+      changed_when: pip_req_unixsocket.changed | default(false)
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add ubuntu to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: true
+
+    - name: Reset ssh connection to allow user changes to affect ansible user
+      meta: reset_connection
+
+# 3) Database tier
+- name: Deploy Database Services
+  hosts: db1
+  remote_user: ubuntu
+  become: true
+  gather_facts: true
+  module_defaults:
+    community.docker.docker_container:
+      docker_host: unix:///var/run/docker.sock
+    community.docker.docker_image:
+      docker_host: unix:///var/run/docker.sock
+    community.docker.docker_volume:
+      docker_host: unix:///var/run/docker.sock
+
+  vars:
+    pg_user: postgres
+    pg_password: postgres
+    pg_db: postgres
+
+  tasks:
+    - name: Create Docker volume for PostgreSQL data
+      community.docker.docker_volume:
+        name: postgres_data
+
+    - name: Pull PostgreSQL image
+      community.docker.docker_image:
+        name: postgres:15
+        source: pull
+
+    - name: Stop existing PostgreSQL container (if any)
+      community.docker.docker_container:
+        name: postgres
+        state: absent
+
+    - name: Run PostgreSQL container
+      community.docker.docker_container:
+        name: postgres
+        image: postgres:15
+        state: started
+        restart_policy: always
+        ports:
+          - "5432:5432"
+        env:
+          POSTGRES_USER: "{{ pg_user }}"
+          POSTGRES_PASSWORD: "{{ pg_password }}"
+          POSTGRES_DB: "{{ pg_db }}"
+        volumes:
+          - postgres_data:/var/lib/postgresql/data
+        healthcheck:
+          test: ["CMD-SHELL", "pg_isready -U {{ pg_user }}"]
+          interval: 10s
+          timeout: 5s
+          retries: 5
+
+    - name: Wait for PostgreSQL to be ready
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 5432
+        timeout: 60
+
+# 4) Backend tier (Redis + Worker)
+- name: Deploy Backend Services
+  hosts: backend1
+  remote_user: ubuntu
+  become: true
+  gather_facts: true
+  module_defaults:
+    community.docker.docker_container:
+      docker_host: unix:///var/run/docker.sock
+    community.docker.docker_image:
+      docker_host: unix:///var/run/docker.sock
+    community.docker.docker_volume:
+      docker_host: unix:///var/run/docker.sock
+
+  vars:
+    db_host: "{{ hostvars['db1']['ansible_host'] | default('127.0.0.1') }}"
+    redis_host: "{{ hostvars['backend1']['ansible_host'] | default('127.0.0.1') }}"
+
+  tasks:
+    - name: Pull Redis image
+      community.docker.docker_image:
+        name: redis:latest
+        source: pull
+
+    - name: Stop existing Redis container (if any)
+      community.docker.docker_container:
+        name: redis
+        state: absent
+
+    - name: Run Redis container
+      community.docker.docker_container:
+        name: redis
+        image: redis:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "6379:6379"
+        healthcheck:
+          test: ["CMD", "redis-cli", "ping"]
+          interval: 10s
+          timeout: 5s
+          retries: 5
+
+    - name: Wait for Redis to be ready
+      wait_for:
+        host: "{{ ansible_host }}"
+        port: 6379
+        timeout: 60
+
+    - name: Pull Worker image (vinaykumar1999)
+      community.docker.docker_image:
+        name: vinaykumar1999/worker:latest
+        source: pull
+      register: worker_image_result
+      failed_when: false
+
+    - name: Use fallback Worker image if custom image not found
+      community.docker.docker_image:
+        name: dockersamples/examplevotingapp_worker:latest
+        source: pull
+      when: worker_image_result.failed
+
+    - name: Stop existing Worker container (if any)
+      community.docker.docker_container:
+        name: worker
+        state: absent
+
+    - name: Run Worker container
+      community.docker.docker_container:
+        name: worker
+        image: "{{ 'vinaykumar1999/worker:latest' if not worker_image_result.failed else 'dockersamples/examplevotingapp_worker:latest' }}"
+        state: started
+        restart_policy: always
+        env:
+          REDIS_HOST: "{{ redis_host }}"
+          DB_HOST: "{{ db_host }}"
+
+# 5) Frontend tier (Vote + Result apps)
+- name: Deploy Frontend Services
+  hosts: frontend1
+  remote_user: ubuntu
+  become: true
+  gather_facts: true
+  module_defaults:
+    community.docker.docker_container:
+      docker_host: unix:///var/run/docker.sock
+    community.docker.docker_image:
+      docker_host: unix:///var/run/docker.sock
+    community.docker.docker_volume:
+      docker_host: unix:///var/run/docker.sock
+
+  vars:
+    redis_host: "{{ hostvars['backend1']['ansible_host'] | default('127.0.0.1') }}"
+    pg_host: "{{ hostvars['db1']['ansible_host'] | default('127.0.0.1') }}"
+
+  tasks:
+    - name: Pull Vote app image (vinaykumar1999)
+      community.docker.docker_image:
+        name: vinaykumar1999/vote:latest
+        source: pull
+      register: vote_image_result
+      failed_when: false
+
+    - name: Use fallback Vote image if custom image not found
+      community.docker.docker_image:
+        name: dockersamples/examplevotingapp_vote:latest
+        source: pull
+      when: vote_image_result.failed
+
+    - name: Pull Result app image (vinaykumar1999)
+      community.docker.docker_image:
+        name: vinaykumar1999/result:latest
+        source: pull
+      register: result_image_result
+      failed_when: false
+
+    - name: Use fallback Result image if custom image not found
+      community.docker.docker_image:
+        name: dockersamples/examplevotingapp_result:latest
+        source: pull
+      when: result_image_result.failed
+
+    - name: Stop existing Vote container (if any)
+      community.docker.docker_container:
+        name: vote
+        state: absent
+
+    - name: Stop existing Result container (if any)
+      community.docker.docker_container:
+        name: result
+        state: absent
+
+    - name: Run Vote app container
+      community.docker.docker_container:
+        name: vote
+        image: "{{ 'vinaykumar1999/vote:latest' if not vote_image_result.failed else 'dockersamples/examplevotingapp_vote:latest' }}"
+        state: started
+        restart_policy: always
+        ports:
+          - "8080:80"
+        env:
+          REDIS_HOST: "{{ redis_host }}"
+
+    - name: Run Result app container
+      community.docker.docker_container:
+        name: result
+        image: "{{ 'vinaykumar1999/result:latest' if not result_image_result.failed else 'dockersamples/examplevotingapp_result:latest' }}"
+        state: started
+        restart_policy: always
+        ports:
+          - "8081:80"
+        env:
+          PG_HOST: "{{ pg_host }}"
