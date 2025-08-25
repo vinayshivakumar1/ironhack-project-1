@@ -1,0 +1,118 @@
+---
+- name: Ensure Docker Engine and SDK are installed
+  hosts: all
+  become: yes
+  tasks:
+    - name: Install required system packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+        state: present
+        update_cache: yes
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+    - name: Add Docker repository
+      apt_repository:
+        repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu focal stable
+        state: present
+    - name: Install Docker Engine
+      apt:
+        name: docker-ce
+        state: present
+        update_cache: yes
+    - name: Remove old python3-docker package (to avoid conflicts)
+      apt:
+        name: python3-docker
+        state: absent
+    - name: Install/upgrade pip itself
+      pip:
+        name: pip
+        state: latest
+    - name: Install Python Docker SDK (for Ansible docker_container)
+      pip:
+        name: docker
+        state: present
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+# ---------------- PostgreSQL ----------------
+- name: Deploy PostgreSQL
+  hosts: db
+  become: yes
+  tasks:
+    - name: Run PostgreSQL container
+      community.docker.docker_container:
+        name: postgres
+        image: postgres:15-alpine
+        state: started
+        restart_policy: always
+        ports:
+          - "5432:5432"
+        env:
+          POSTGRES_USER: "postgres"
+          POSTGRES_PASSWORD: "postgres"
+        docker_host: unix:///var/run/docker.sock
+# ---------------- Backend ----------------
+- name: Deploy Backend
+  hosts: backend
+  become: yes
+  tasks:
+    - name: Run Worker app container
+      community.docker.docker_container:
+        name: worker
+        image: vinaykumar1999/worker-app:latest
+        state: started
+        restart_policy: always
+        env:
+          DB_HOST: "{{ hostvars['db1'].ansible_host | default('db1') }}"
+          DB_USER: "postgres"
+          DB_PASSWORD: "postgres"
+          REDIS_HOST: "{{ hostvars['frontend1'].ansible_host | default('frontend1') }}"
+        docker_host: unix:///var/run/docker.sock
+# ---------------- Frontend ----------------
+- name: Deploy Frontend
+  hosts: frontend
+  become: yes
+  tasks:
+    - name: Run Redis container
+      community.docker.docker_container:
+        name: redis
+        image: redis:alpine
+        state: started
+        restart_policy: always
+        ports:
+          - "6379:6379"
+        docker_host: unix:///var/run/docker.sock
+    - name: Run Vote app container
+      community.docker.docker_container:
+        name: vote
+        image: towfiqueahmmed/vote:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "8080:80"
+        env:
+          REDIS_HOST: "redis"
+        docker_host: unix:///var/run/docker.sock
+    - name: Run Result app container
+      community.docker.docker_container:
+        name: result
+        image: towfiqueahmmed/result:latest
+        state: started
+        restart_policy: always
+        ports:
+          - "8081:80"
+        env:
+          PG_HOST: "{{ hostvars['db1'].ansible_host | default('db1') }}"
+          PG_USER: "postgres"
+          PG_PASSWORD: "postgres"
+        docker_host: unix:///var/run/docker.sock

@@ -45,9 +45,9 @@
 
         healthcheck:
           test: ["CMD-SHELL", "pg_isready -U postgres"]
-          interval: 5s
+          interval: 10s
           retries: 5
-          start_period: 10s
+          start_period: 15s
 # #########################################
 # # Backend - Redis + Worker
 # #########################################
@@ -75,7 +75,7 @@
           start_period: 5s
     - name: Wait for Redis to be ready
       wait_for:
-        host: 10.0.2.33
+        host: 10.0.2.158
         port: 6379
         delay: 5
         timeout: 30
@@ -86,8 +86,8 @@
         state: started
         restart_policy: always
         env:
-          REDIS_HOST: "10.0.2.33" # Backend host IP
-          DB_HOST: "10.0.3.99" # DB host IP
+          REDIS_HOST: "10.0.2.158" # Backend host IP
+          DB_HOST: "10.0.3.113" # DB host IP
         networks:
           - name: micro-net
 #########################################
@@ -98,13 +98,13 @@
   tasks:
     - name: Wait for PostgreSQL to be ready
       wait_for:
-        host: 10.0.3.99 # DB host IP
+        host: 10.0.3.113 # DB host IP
         port: 5432
         delay: 5
         timeout: 60
     - name: Wait for Redis to be ready
       wait_for:
-        host: 10.0.2.33 # Backend host IP
+        host: 10.0.2.158 # Backend host IP
         port: 6379
         delay: 5
         timeout: 30
@@ -117,7 +117,7 @@
         ports:
           - "8080:80"
         env:
-          REDIS_HOST: "10.0.2.33"
+          REDIS_HOST: "10.0.2.158"
           REDIS_PORT: "6379"
     - name: Run Result container
       docker_container:
@@ -128,7 +128,7 @@
         ports:
           - "8081:80"
         env:
-          PG_HOST: "10.0.3.99"
+          PG_HOST: "10.0.3.113"
           PG_PORT: "5432"
           PG_USER: "postgres"
           PG_PASSWORD: "postgres"
